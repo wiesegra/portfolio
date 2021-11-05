@@ -1,0 +1,167 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Importing Data and libraries
+cars_orig <- read.csv("vehicles.csv")
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(randomForest)
+```
+
+```{r}
+# Cutting out extraneous variables and converting missing data into NA
+cars_orig[cars_orig == ""] <- "NA"
+cars_orig[is.na(cars_orig) == T] <- "NA"
+cars<- cars_orig %>% 
+  select(state,price,year,manufacturer,condition,cylinders,fuel,odometer,title_status,transmission,drive,type,paint_color)
+cars <- data.frame(lapply(cars, function(x) {
+                  gsub(" ", "", x)
+             }))
+
+cars <- data.frame(lapply(cars, function(x) {
+                  gsub("-", "_", x)}))
+```
+
+```{r}
+# Cleaning up data
+
+
+cars$drive[cars$drive == "4wd"] <- "fourwd"
+
+cars$condition[cars$condition == 'NA'] <- "missing" 
+cars$condition[is.na(cars$condition) == T] <- "missing" 
+cars$condition <- factor(cars$condition, c("missing","salvage","fair","good","excellent","like new","new"))
+cars$condition[cars$condition == 'NA'] <- "missing" 
+cars$condition[is.na(cars$condition) == T] <- "missing" 
+
+cars <- subset(cars, is.na(cars$price) == F & cars$odometer != "NA" & cars$price != "NA" & cars$year != 'NA')
+sum(is.na(cars$price))
+cars$odometer <- as.integer(cars$odometer)
+cars$year <- as.integer(cars$year)
+cars$price <- as.integer(cars$price)
+cars <- subset(cars, is.na(cars$price) == F & cars$odometer != "NA" & cars$price != "NA" & cars$year != 'NA')
+
+for (i in c(8,4,6,10,5,3,12)){cars$cylinders <- gsub(paste0(i,"cylinders"), paste0("cylinders",i), cars$cylinders)}
+
+
+p_idx <- cars %>% 
+  group_by(year) %>% 
+  summarize(avg = median(price))
+
+for (i in 1:nrow(cars)){
+  if (cars$price[i] <= 10){
+    cars$price[i] = p_idx$avg[cars$year[i] == p_idx$year]
+  }
+}
+
+print(sum(is.na(cars)))
+```
+
+```{r}
+dummymachine <- function(x,z){
+  dummies <- model.matrix(~x-1)
+  colnames(dummies) <- c(paste0((gsub(" ", "", unique(x), fixed = TRUE)),"_",z))
+  return(dummies)
+}
+
+matrix_cars <- subset(cars, select = c("price","year","odometer","condition"))
+
+matrix_cars <- cbind(matrix_cars, dummymachine(cars$fuel,'fuel'))
+matrix_cars <- cbind(matrix_cars, dummymachine(cars$state,'state'))
+matrix_cars <- cbind(matrix_cars, dummymachine(cars$manufacturer,'make'))
+matrix_cars <- cbind(matrix_cars, dummymachine(cars$fuel,'fuel'))
+matrix_cars <- cbind(matrix_cars, dummymachine(cars$cylinders,'cyl'))
+matrix_cars <- cbind(matrix_cars, dummymachine(cars$title_status,'title'))
+matrix_cars <- cbind(matrix_cars, dummymachine(cars$transmission,'trans'))
+matrix_cars <- cbind(matrix_cars, dummymachine(cars$drive,'drive'))
+matrix_cars <- cbind(matrix_cars, dummymachine(cars$type,'type'))
+matrix_cars <- cbind(matrix_cars, dummymachine(cars$paint_color,'color'))
+names(matrix_cars) <- paste0(names(matrix_cars),1:162)
+```
+
+```{r}
+# Exploratory Analysis
+cars %>% 
+  filter(price < quantile(price, p = .99)) %>% 
+  sample_n(size = 100000) %>% 
+  ggplot(mapping = aes(price))+
+    geom_density(aes(color = fuel),fill = "grey",alpha = .2)
+```
+
+```{r}
+# Exploratory Analysis
+cars %>% 
+  filter(price < quantile(price, p = .99)) %>% 
+  sample_n(size = 100000) %>% 
+  ggplot(mapping = aes(price))+
+    geom_density(aes(color = title_status),fill = "grey",alpha = .2)
+```
+
+```{r}
+cars %>% 
+  filter(price < quantile(price, p = .99)) %>% 
+  filter(odometer < quantile(price, p = .99)) %>% 
+  filter(type %in% c("coupe","sedan","SUV","truck")) %>% 
+  sample_n(size = 50000) %>% 
+  ggplot(mapping = aes(year,price))+
+    geom_point(aes(color = condition))+
+    facet_wrap(~type)
+```
+
+```{r}
+
+cars %>% 
+  filter(price < quantile(price, p = .99)) %>% 
+  filter(transmission %in% c('automatic','manual')) %>% 
+  sample_n(size = 100000) %>% 
+  ggplot(mapping = aes(price))+
+    geom_density(aes(color = type),fill = "grey",alpha = .2)+
+    facet_wrap(~transmission)
+
+```
+
+
+```{r}
+matrix_cars_sample <- sample_n(matrix_cars, 40000)
+```
+
+
+```{r}
+tic("fitting model....")
+price.rf <- randomForest(price1 ~ ., data = matrix_cars_sample, mtry = 6, importance = T)
+toc()
+```
+
+```{r}
+summary(price.prf)
+
+```
+
+
+```{r}
+# Parallel Random Forests
+tic("fitting model....")
+registerDoSNOW(makeCluster(4, type = "SOCK"))
+price.prf <- foreach(ntree = rep(125, 4), .combine = combine, .packages = "randomForest") %dopar% { randomForest(price1 ~ ., data = matrix_cars_sample, mtry = 6,ntree = ntree, importance = T)
+}
+toc()
+```
+
+
+
+```{r}
+tic("fitting model....")
+price.lr <- lm(price1 ~ ., data = matrix_cars)
+toc()
+```
+```{r}
+summary(price.lr)
+```
